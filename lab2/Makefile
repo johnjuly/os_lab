@@ -164,7 +164,7 @@ qemu: $(UCOREIMG) $(SWAPIMG) $(SFSIMG)
 	$(V)$(QEMU) \
 		-machine virt \
 		-nographic \
-		-bios default \
+		-bios tools/opensbi-0.6-rv64-bin/platform/qemu/virt/firmware/fw_jump.elf \
 		-device loader,file=$(UCOREIMG),addr=0x80200000
 
 debug: $(UCOREIMG) $(SWAPIMG) $(SFSIMG)

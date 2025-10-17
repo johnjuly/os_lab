@@ -1,5 +1,6 @@
 #include <default_pmm.h>
 #include <best_fit_pmm.h>
+#include<buddy_pmm.h>
 #include <defs.h>
 #include <error.h>
 #include <memlayout.h>
@@ -34,7 +35,7 @@ static void check_alloc_page(void);
 
 // init_pmm_manager - initialize a pmm_manager instance
 static void init_pmm_manager(void) {
-    pmm_manager = &best_fit_pmm_manager;
+    pmm_manager = &buddy_pmm_manager;
     cprintf("memory management: %s\n", pmm_manager->name);
     pmm_manager->init();
 }
@@ -63,7 +64,7 @@ size_t nr_free_pages(void) {
 
 static void page_init(void) {
     va_pa_offset = PHYSICAL_MEMORY_OFFSET;
-
+//读取并校验物理内存范围（DTB）
     uint64_t mem_begin = get_memory_base();
     uint64_t mem_size  = get_memory_size();
     if (mem_size == 0) {
@@ -74,7 +75,7 @@ static void page_init(void) {
     cprintf("physcial memory map:\n");
     cprintf("  memory: 0x%016lx, [0x%016lx, 0x%016lx].\n", mem_size, mem_begin,
             mem_end - 1);
-
+//裁减到内核可管理上限
     uint64_t maxpa = mem_end;
 
     if (maxpa > KERNTOP) {
@@ -82,19 +83,21 @@ static void page_init(void) {
     }
 
     extern char end[];
-
+//计算物理总页数与 页描述符 数组位置
     npage = maxpa / PGSIZE;
     //kernel在end[]结束, pages是剩下的页的开始
     pages = (struct Page *)ROUNDUP((void *)end, PGSIZE);
-
+//初始全部标记为保留
     for (size_t i = 0; i < npage - nbase; i++) {
         SetPageReserved(pages + i);
     }
-
+//计算被元数据占用后第一个可用物理地址
     uintptr_t freemem = PADDR((uintptr_t)pages + sizeof(struct Page) * (npage - nbase));
 
+    //页对齐 
     mem_begin = ROUNDUP(freemem, PGSIZE);
     mem_end = ROUNDDOWN(mem_end, PGSIZE);
+    //建立空闲区
     if (freemem < mem_end) {
         init_memmap(pa2page(mem_begin), (mem_end - mem_begin) / PGSIZE);
     }
