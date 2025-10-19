@@ -50,9 +50,6 @@ test_output/
 *.bak
 *.backup
 
-# 报告目录（如果不需要版本控制）
-# reports/
-# report/
 
 # 第三方二进制文件（可选）
-tools/opensbi-0.6-rv64-bin/
+lab2/tools/opensbi-0.6-rv64-bin/

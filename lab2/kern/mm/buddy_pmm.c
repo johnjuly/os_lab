@@ -6,13 +6,13 @@
 // 在 base..base+n 中 carve 出元数据页
 
 static struct Page *buddy_base_page = NULL;   // 可分配区域基址（排除元数据）
-static unsigned *buddy_longest = NULL;        // 伙伴树数组（位于 carved 元数据页）
-static unsigned buddy_size = 0;               // 管理的总页数（2 的幂）
+static size_t *buddy_longest = NULL;          // 伙伴树数组（位于 carved 元数据页）
+static size_t buddy_size = 0;                 // 管理的总页数（2 的幂）
 static size_t nr_free = 0;                    // 当前空闲页数
 
 // 工具  宏/函数
 #define IS_POWER_OF_2(x) (!((x) & ((x) - 1)))//2的幂次方二进制表示只有1位
-static unsigned roundup_pow2(unsigned x) {
+static size_t roundup_pow2(size_t x) {
     //特殊情况
     if (x <= 1) return 1;
     x--;
@@ -22,11 +22,12 @@ static unsigned roundup_pow2(unsigned x) {
     x |= x >> 4;
     x |= x >> 8;
     x |= x >> 16;
+    x |= x >> 32;  
     return x + 1;
 }
-static unsigned floor_pow2(unsigned x) {
+static size_t floor_pow2(size_t x) {
     if (x == 0) return 0;
-    unsigned p = roundup_pow2(x);
+    size_t p = roundup_pow2(x);
     return (p == x) ? x : (p >> 1);
 }
 
@@ -55,20 +56,20 @@ buddy_init_memmap(struct Page *base, size_t n) {
         set_page_ref(p, 0);
     }
 
-    // 预估需要的元数据空间（unsigned[2*size-1]），再据此确定可管理的 2^k
+    // 预估需要的元数据空间（size_t[2*size-1]），再据此确定可管理的 2^k
     // 先假设全部可用，迭代出满足 bytes(meta) 的最大 2^k
-    unsigned avail = (unsigned)n;
-    unsigned best_size = 0;
-    unsigned meta_pages_need = 0;
+    size_t avail = n;
+    size_t best_size = 0;
+    size_t meta_pages_need = 0;
 
     //循环寻找最佳大小页的内存
     for (;;) {
-        unsigned candid = floor_pow2(avail);
+        size_t candid = floor_pow2(avail);
         if (candid < 1) break;
 
         //计算元数据的需求
-        unsigned node_cnt = 2 * candid - 1;
-        size_t meta_bytes = sizeof(unsigned) * node_cnt;
+        size_t node_cnt = 2 * candid - 1;
+        size_t meta_bytes = sizeof(size_t) * node_cnt;
         size_t meta_pages = (meta_bytes + PGSIZE - 1) / PGSIZE; //向上取整的公式
         if (candid <= avail - meta_pages) {
             best_size = candid;
@@ -92,16 +93,16 @@ buddy_init_memmap(struct Page *base, size_t n) {
     }
 
     // 伙伴数组起始虚拟地址
-    buddy_longest = (unsigned *)page_kva(meta_base);
-    // buddy_longest 需要 node_cnt 个 unsigned 空间，跨越多个页
+    buddy_longest = (size_t *)page_kva(meta_base);
+    // buddy_longest 需要 node_cnt 个 size_t 空间，跨越多个页
 
     buddy_base_page = data_base;
     buddy_size = best_size;
     nr_free = buddy_size;
 
     // 初始化 longest 树
-    unsigned node_size = buddy_size * 2;
-    for (unsigned i = 0; i < 2 * buddy_size - 1; i++) {
+    size_t node_size = buddy_size * 2;
+    for (size_t i = 0; i < 2 * buddy_size - 1; i++) {
         if (IS_POWER_OF_2(i + 1)) {
             node_size >>= 1;
         }
@@ -117,8 +118,8 @@ buddy_alloc_pages(size_t n) {
     if (n > nr_free) return NULL;
 
     // 按 2 的幂分配
-    unsigned need = (unsigned)n;
-    unsigned alloc_sz = roundup_pow2(need);
+    size_t need = n;
+    size_t alloc_sz = roundup_pow2(need);
     if (alloc_sz > buddy_size) return NULL;
     if (alloc_sz > nr_free) return NULL;
 
@@ -126,11 +127,11 @@ buddy_alloc_pages(size_t n) {
     if (buddy_longest[0] < alloc_sz) return NULL;
 
     //树的遍历  从根节点开始
-    unsigned index = 0;
-    unsigned node_size = buddy_size;
+    size_t index = 0;
+    size_t node_size = buddy_size;
     while (node_size != alloc_sz) {
-        unsigned left = 2 * index + 1;
-        unsigned right = left + 1;
+        size_t left = 2 * index + 1;
+        size_t right = left + 1;
         if (buddy_longest[left] >= alloc_sz) {
             index = left;
         } else {
@@ -141,21 +142,21 @@ buddy_alloc_pages(size_t n) {
     buddy_longest[index] = 0; // 标记节点为已占用
 
     // 更新祖先
-    unsigned idx_up = index;
+    size_t idx_up = index;
     while (idx_up) {
         idx_up = (idx_up - 1) >> 1; //父节点
-        unsigned left = 2 * idx_up + 1, right = left + 1;
-        unsigned l = buddy_longest[left];
-        unsigned r = buddy_longest[right];
+        size_t left = 2 * idx_up + 1, right = left + 1;
+        size_t l = buddy_longest[left];
+        size_t r = buddy_longest[right];
 
         buddy_longest[idx_up] = (l > r) ? l : r;
     }
     // 计算偏移
-    unsigned offset = (index + 1) * node_size - buddy_size;
+    size_t offset = (index + 1) * node_size - buddy_size;
 
      struct Page *page = buddy_base_page + offset;
     // 记录已分配块大小在 property 字段，便于 free 时识别
-    for (unsigned i = 0; i < alloc_sz; i++) {
+    for (size_t i = 0; i < alloc_sz; i++) {
         struct Page *pp = page + i;
         pp->flags = 0;
         set_page_ref(pp, 0);
@@ -177,16 +178,16 @@ buddy_free_pages(struct Page *base, size_t n) {
     assert(base >= buddy_base_page);
     
     // 获取实际分配的大小
-    unsigned alloc_sz = (base->property != 0) ? base->property : (unsigned)n;
+    size_t alloc_sz = (base->property != 0) ? base->property : n;
     assert(IS_POWER_OF_2(alloc_sz) && alloc_sz <= buddy_size);
 
     // 计算偏移
-    unsigned offset = (unsigned)(base - buddy_base_page);
+    size_t offset = (size_t)(base - buddy_base_page);
     assert(offset + alloc_sz <= buddy_size);
 
     // 清理页状态
     struct Page *p = base;
-    for (unsigned i = 0; i < alloc_sz; i++, p++) {
+    for (size_t i = 0; i < alloc_sz; i++, p++) {
         assert(!PageReserved(p) && !PageProperty(p));
         p->flags = 0;
         set_page_ref(p, 0);
@@ -194,13 +195,13 @@ buddy_free_pages(struct Page *base, size_t n) {
     }
 
     // 将块释放回 buddy 树： 找到该叶对应的 index。自顶向下
-    unsigned index = 0;
-    unsigned node_size = buddy_size;
-    unsigned node_offset = 0;
+    size_t index = 0;
+    size_t node_size = buddy_size;
+    size_t node_offset = 0;
     while (node_size != alloc_sz) {
-        unsigned left = 2 * index + 1;
-        unsigned right = left + 1;
-        unsigned half = node_size >> 1;
+        size_t left = 2 * index + 1;
+        size_t right = left + 1;
+        size_t half = node_size >> 1;
 
         //左子树管理[node_offset, node_offset + half) 范围，右子树管理 [node_offset + half, node_offset + node_size)
         if (offset < node_offset + half) {
@@ -217,11 +218,11 @@ buddy_free_pages(struct Page *base, size_t n) {
 
     // 向上合并
     while (index) {
-        unsigned parent = (index - 1) >> 1;
-        unsigned left = 2 * parent + 1;
-        unsigned right = left + 1;
-        unsigned l = buddy_longest[left];
-        unsigned r = buddy_longest[right];
+        size_t parent = (index - 1) >> 1;
+        size_t left = 2 * parent + 1;
+        size_t right = left + 1;
+        size_t l = buddy_longest[left];
+        size_t r = buddy_longest[right];
         if (l == r) {
             buddy_longest[parent] = l << 1;
         } else {
