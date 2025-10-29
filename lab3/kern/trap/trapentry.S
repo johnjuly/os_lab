@@ -44,7 +44,7 @@
     csrrw s0, sscratch, x0
     csrr s1, sstatus
     csrr s2, sepc
-    csrr s3, sbadaddr
+    csrr s3, stval
     csrr s4, scause
 
     STORE s0, 2*REGBYTES(sp)
@@ -61,6 +61,9 @@
 
     csrw sstatus, s1
     csrw sepc, s2
+    
+    # Must restore general registers AFTER writing CSRs
+    # because x18 (s2) will be restored below
 
     # restore x registers
     LOAD x1, 1*REGBYTES(sp)
