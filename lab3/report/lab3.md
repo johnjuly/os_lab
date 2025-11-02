@@ -33,7 +33,7 @@
 4. **关机处理**：打印 10 行后调用 `sbi_shutdown()` 正常关机
 
 运行结果如下
-![alt text](image.png)
+![alt text](image-2.png)
 
 ### 定时器中断处理流程
 
