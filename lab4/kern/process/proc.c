@@ -262,6 +262,9 @@ int kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags)
     tf.gpr.s1 = (uintptr_t)arg;
 
     // 设置 trapframe 中的 status 寄存器（SSTATUS）
+    // SSTATUS_SPP：Supervisor Previous Privilege（设置为 supervisor 模式，因为这是一个内核线程）
+    // SSTATUS_SPIE：Supervisor Previous Interrupt Enable（设置为启用中断，因为这是一个内核线程）
+    // SSTATUS_SIE：Supervisor Interrupt Enable（设置为禁用中断，因为我们不希望该线程被中断）
     tf.status = (read_csr(sstatus) | SSTATUS_SPP | SSTATUS_SPIE) & ~SSTATUS_SIE;
     // 将入口点（epc）设置为 kernel_thread_entry 函数，作用实际上是将pc指针指向它(*trapentry.S会用到)
     tf.epc = (uintptr_t)kernel_thread_entry;

@@ -1,4 +1,6 @@
-# 练习
+# 实验四：进程管理
+
+> 小组成员：李天一 2314018 邓鑫 2313982 谢雨婷 2311623
 
 ## 练习 1：分配并初始化一个进程控制块（需要编码）
 
@@ -200,3 +202,17 @@ void proc_run(struct proc_struct *proc)
 第二个是 `initproc`，PID 是 1，名字叫 "init"。它是通过 `kernel_thread(init_main, "Hello world!!", 0)` 创建的，走的是完整的 fork 流程，所以内核栈是通过 `do_fork()` → `setup_kstack()` 动态分配的。它的任务是执行 `init_main` 函数，打印一些初始化信息，比如 "this initproc, pid = 1" 和 "Hello world!!" 之类的。
 
 在 `proc_init()` 中，系统先将 `idleproc` 的状态设置为 `PROC_RUNNABLE`，并将 `current` 指向它，然后创建 `initproc`。两个线程都被设置为 `PROC_RUNNABLE` 状态，所以系统启动后，调度器会在它们之间进行切换执行。
+
+### 扩展练习 Challenge：
+
+1. **说明语句 `local_intr_save(intr_flag);....local_intr_restore(intr_flag);` 是如何实现开关中断的？**
+
+`local_intr_save` 和 `local_intr_restore` 这两个宏定义在 `kern/sync/sync.h` 中，它们通过保存和恢复中断状态来实现开关中断的功能，实现原子操作，这种设计可以确保在临界区代码执行期间不会被中断打断，同时还能在退出时恢复到原来的中断状态。
+
+具体来说，`local_intr_save(intr_flag)` 宏会展开为 `intr_flag = __intr_save()`。`__intr_save()` 函数首先通过 `read_csr(sstatus)` 读取 RISC-V 的 `sstatus`（Supervisor Status）寄存器，然后检查其中的 `SSTATUS_SIE`（Supervisor Interrupt Enable）位。这个位控制着在 Supervisor 模式下是否允许中断。如果这个位是 1，说明中断当前是使能的，函数就会调用 `intr_disable()` 来关闭中断，并返回 1 表示之前中断是开启的。如果这个位是 0，说明中断本来就是关闭的，函数就直接返回 0。
+
+`intr_disable()` 函数（位于 `kern/driver/intr.c`）通过 `clear_csr(sstatus, SSTATUS_SIE)` 来清除 `sstatus` 寄存器的 `SSTATUS_SIE` 位。
+
+当临界区代码执行完毕后，调用 `local_intr_restore(intr_flag)` 来恢复中断状态。这个宏会展开为 `__intr_restore(intr_flag)`。`__intr_restore()` 函数检查传入的 `flag` 参数，如果它是 1（表示调用 `local_intr_save` 时中断是使能的），就调用 `intr_enable()` 重新使能中断。如果 `flag` 是 0（表示调用 `local_intr_save` 时中断本来就是关闭的），就不做任何操作，保持中断关闭的状态。
+
+`intr_enable()` 函数通过 `set_csr(sstatus, SSTATUS_SIE)` 来设置 `sstatus` 寄存器的 `SSTATUS_SIE` 位。
