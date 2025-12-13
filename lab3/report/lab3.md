@@ -176,7 +176,7 @@ struct trapframe {
     uintptr_t epc;
     uintptr_t badvaddr;
     uintptr_t cause;
-};
+};****
 ```
 
 `struct pushregs`按标准寄存器命名顺序定义各寄存器：`x0` (zero) 对应 `trap->gpr.zero`，`x1` (ra) 对应 `trap->gpr.ra`，`x2` (sp) 对应 `trap->gpr.sp`，……，`x31` 对应 `trap->gpr.t6`。

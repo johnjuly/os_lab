@@ -44,7 +44,7 @@ core.*
 
 # 测试输出
 test_output/
-
+*.log
 # 备份文件
 *~
 *.bak
@@ -53,3 +53,4 @@ test_output/
 
 # 第三方二进制文件（可选）
 lab2/tools/opensbi-0.6-rv64-bin/
+qemu-4.1.1/

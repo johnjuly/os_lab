@@ -138,45 +138,91 @@ get_proc_name(struct proc_struct *proc)
 }
 
 // get_pid - alloc a unique pid for process
+// 
+// 算法说明：
+// 使用"安全范围"机制优化PID分配，避免每次分配都遍历整个进程链表。
+// 核心思想：维护一个安全范围 [last_pid, next_safe)，在此范围内无需遍历即可直接分配。
+// 
+// 执行流程：
+// 1. 快速路径：当 last_pid < next_safe 时，直接返回 last_pid（无需遍历）
+// 2. 慢速路径：当 last_pid >= next_safe 时，遍历进程链表检查冲突并更新安全范围
+// 3. 冲突处理：发现冲突时递增 last_pid，如果超出安全范围则重新扫描
+// 4. 范围更新：遍历时发现更大的PID，缩小 next_safe 以扩大安全范围
 static int
 get_pid(void)
 {
+    // 编译期断言：确保 MAX_PID > MAX_PROCESS，保证有足够的PID空间
     static_assert(MAX_PID > MAX_PROCESS);
     struct proc_struct *proc;
     list_entry_t *list = &proc_list, *le;
+
+    // 静态变量（在函数多次调用间保持状态）：
+    // - next_safe: 安全范围的上界，表示 [last_pid, next_safe) 区间内没有冲突的PID
+    // - last_pid:  上次分配的PID，从1开始递增分配
+    // 初始值均为 MAX_PID，首次调用时会触发重置逻辑
     static int next_safe = MAX_PID, last_pid = MAX_PID;
+    
+    // 步骤1：递增 last_pid 并检查是否达到上限
+    // 如果达到 MAX_PID，则回绕到 1（PID 从 1 开始，0 通常保留给 idle 进程）
     if (++last_pid >= MAX_PID)
     {
         last_pid = 1;
-        goto inside;
+        goto inside;  // 跳转到慢速路径，需要遍历检查
     }
+
+    // 步骤2：检查是否需要遍历进程链表
+    // 如果 last_pid < next_safe，说明在安全范围内，可以直接返回（快速路径）
+    // 如果 last_pid >= next_safe，需要遍历链表检查冲突（慢速路径）
     if (last_pid >= next_safe)
     {
     inside:
+        // 重置安全范围上界，准备重新计算
         next_safe = MAX_PID;
+        
     repeat:
+        // 步骤3：开始遍历进程链表，检查 PID 冲突
         le = list;
         while ((le = list_next(le)) != list)
         {
+            // 将链表节点转换为进程结构体指针
             proc = le2proc(le, list_link);
+            
+            // 情况1：发现冲突 - 当前进程的 PID 与 last_pid 相同
             if (proc->pid == last_pid)
             {
+                // 递增 last_pid 尝试下一个值
+                // 如果递增后的 last_pid >= next_safe，说明之前计算的安全范围已失效
+                // 需要重新扫描整个链表（因为可能跳过了某些冲突的PID）
                 if (++last_pid >= next_safe)
                 {
+                    // 如果 last_pid 达到上限，回绕到 1
                     if (last_pid >= MAX_PID)
                     {
                         last_pid = 1;
                     }
+                    // 重置安全范围，重新扫描
                     next_safe = MAX_PID;
-                    goto repeat;
+                    goto repeat;  // 跳转到 repeat，重新遍历链表
                 }
+                // 如果 last_pid < next_safe，继续遍历（可能还有更多冲突）
             }
+            // 情况2：更新安全范围 - 发现一个大于 last_pid 的 PID
+            // 条件：proc->pid > last_pid 且 proc->pid < next_safe
+            // 含义：在 [last_pid, proc->pid) 区间内没有冲突的PID
             else if (proc->pid > last_pid && next_safe > proc->pid)
             {
+                // 缩小安全范围上界，扩大安全区间
+                // 例如：last_pid=2, 遇到 pid=5, 则 next_safe=5
+                // 表示 [2, 5) 区间是安全的，可以直接分配 2, 3, 4
                 next_safe = proc->pid;
             }
         }
+        // 遍历结束：此时 last_pid 是一个未使用的PID，next_safe 已更新为新的安全范围上界
     }
+    
+    // 步骤4：返回分配到的 PID
+    // 如果执行了快速路径（last_pid < next_safe），直接返回，无需遍历
+    // 如果执行了慢速路径，遍历后返回找到的未使用 PID
     return last_pid;
 }
 
