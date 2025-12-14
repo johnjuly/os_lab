@@ -328,6 +328,20 @@ sret 指令（返回用户态）
 
 ### 调试 1 页表查询过程
 
+**执行结果**
+
+1. 终端 3 查看当前指令`sd ra,8(sp)`![alt text](<Pasted image 20251213144904.png>)
+2. 查看栈指针![alt text](<Pasted image 20251213145122.png>)
+3. 终端 2 即 调试 qemu 的 gdb 查看当前地址内容，为 sp+8.
+   ![alt text](<Pasted image 20251213132935.png>)
+4. 查看调用栈![alt text](<Pasted image 20251213134148.png>)
+5. 单步执行中 打印有关页表配置的信息![alt text](<Pasted image 20251213151407.png>)
+6. 关于 tlb 在`store_helper`函数打断点，查看调用函数的信息![alt text](<Pasted image 20251213172936.png>)
+7. 观察 tlb 命中情况，为 false $2 的值![alt text](<Pasted image 20251213173646.png>)
+8. 对于 mbare 模式下代码的调试，终端 3kern_entry 处打断点，可以看到 satp 为 0![alt text](<Pasted image 20251213175521.png>)
+9. mode 也为 0 ![alt text](<Pasted image 20251213175719.png>)
+10. 地址也没有改变![alt text](<Pasted image 20251213175910.png>)
+
 - 关于配置问题，在容器里，没有下载源码，所以又重新编译调试版本 放到了工作目录下，很曲折了。
 - 关于两个 gdb 有时候不动的问题，把 gdb 看作是一个 toolkit,相比于简单的 tool 例如 printf 调试，它的功能是蛮多了。这更加深了 everything is a state machine 的执念。
 
@@ -576,7 +590,6 @@ get_physical_address (target/riscv/cpu_helper.c:155)
 - MBARE 模式：直接返回虚拟地址，不经过 TLB 和页表
 - SV39 模式：先查找 TLB，miss 后遍历页表，然后填充 TLB
 - 观察调用路径的差异：MBARE 模式下可能不会调用 `store_helper` 中的 TLB 查找代码
-- 观察 TLB 查找的软件实现细节：可以单步执行 `tlb_hit`、`tlb_entry` 等函数
 
 #### 1.5 调试过程中的有趣细节
 
@@ -629,7 +642,11 @@ get_physical_address (target/riscv/cpu_helper.c:155)
 
 #### 2.1 ecall 和 sret 指令的 QEMU 处理流程
 
-通过双重 GDB 调试，完整追踪了 QEMU 如何处理 ecall 和 sret 指令。
+**调试结果**
+
+1. 查看调用栈![alt text](<Pasted image 20251213182848.png>)
+2. cause 为 8 表示是 ecall![alt text](<Pasted image 20251213183029.png>) 3.找到 sert 的地址![alt text](<Pasted image 20251213184201.png>)
+3. 使用 hleper_sert 函数断点![alt text](<Pasted image 20251213184902.png>)
 
 **ecall 指令的处理流程：**
 
