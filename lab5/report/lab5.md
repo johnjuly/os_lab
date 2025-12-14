@@ -76,13 +76,164 @@ COW 的优势在于：如果子进程创建后立即执行 `exec`（这是常见
 
 **fork** 负责创建子进程。它通过 `do_fork` 完成：分配新的进程控制块、复制父进程的内存空间、设置父子关系、分配 PID 并加入进程链表，最后唤醒子进程使其可运行。关键点在于子进程会获得父进程的完整状态，包括内存内容、打开的文件等，但拥有独立的进程控制块和内存空间。
 
+```text
+用户程序: sys_fork()
+  ↓
+ecall 指令
+  ↓
+__alltraps → trap() → syscall()
+  ↓
+sys_fork() (syscall.c:16)
+  - 从 trapframe 获取用户栈指针
+  - 调用 do_fork(0, stack, tf)
+  ↓
+do_fork() (proc.c:436)
+  1. alloc_proc() - 分配进程控制块
+  2. setup_kstack() - 分配内核栈
+  3. copy_mm() - 复制/共享内存空间
+  4. copy_thread() - 设置 trapframe 和 context
+  5. get_pid() + hash_proc() + set_links() - 分配 PID 并加入链表
+  6. wakeup_proc() - 唤醒子进程（设为 PROC_RUNNABLE）
+  7. 返回子进程 PID
+  ↓
+返回值写入 trapframe->gpr.a0
+  ↓
+__trapret → sret → 返回用户态
+  ↓
+父进程：返回子进程 PID
+子进程：返回 0（在 copy_thread 中设置 tf->gpr.a0 = 0）
+```
+
 **exec** 用于加载并执行新程序。`do_execve` 会先清理当前进程的旧内存空间，然后调用 `load_icode` 解析 ELF 文件，建立新的内存映射，设置代码段和数据段，最后配置 trapframe 让进程从新程序的入口点开始执行。这个过程会替换当前进程的内存内容，但保持进程 ID 和某些属性不变。
+
+```text
+用户程序: sys_exec(name, len, binary, size)
+  ↓
+ecall 指令
+  ↓
+__alltraps → trap() → syscall()
+  ↓
+sys_exec() (syscall.c:30)
+  - 从 trapframe 获取参数
+  - 调用 do_execve(name, len, binary, size)
+  ↓
+do_execve() (proc.c:768)
+  1. 检查参数合法性
+  2. 如果 mm != NULL：
+     - lsatp(boot_pgdir_pa) - 切换到内核页表
+     - exit_mmap() - 释放旧内存映射
+     - put_pgdir() - 释放页目录
+     - mm_destroy() - 销毁内存管理结构
+  3. load_icode(binary, size) - 加载新程序
+     - 解析 ELF 文件
+     - 建立新的内存映射
+     - 设置代码段和数据段
+     - 设置 trapframe（epc = 程序入口，sp = 用户栈）
+  4. set_proc_name() - 设置进程名
+  5. 返回 0（成功）
+  ↓
+如果 load_icode 失败：
+  - do_exit(ret) - 退出进程
+  ↓
+返回值写入 trapframe->gpr.a0
+  ↓
+__trapret → sret → 返回到新程序的入口点
+  ↓
+开始执行新程序的第一条指令
+```
 
 **wait** 让父进程等待子进程结束。`do_wait` 会遍历子进程列表，查找处于 ZOMBIE 状态的子进程。如果找到了，就清理子进程的资源并返回；如果没找到，父进程会进入 SLEEPING 状态，等待子进程退出时被唤醒。这实现了进程间的同步机制。
 
+```text
+用户程序: sys_wait(pid, code_store)
+  ↓
+ecall 指令
+  ↓
+__alltraps → trap() → syscall()
+  ↓
+sys_wait() (syscall.c:23)
+  - 从 trapframe 获取参数
+  - 调用 do_wait(pid, store)
+  ↓
+do_wait() (proc.c:819)
+  1. 检查 code_store 参数合法性
+  2. 查找子进程：
+     - 如果 pid != 0：查找指定 PID 的子进程
+     - 如果 pid == 0：查找任意 ZOMBIE 状态的子进程
+  3. 如果找到 ZOMBIE 状态的子进程：
+     - 获取退出码（写入 code_store）
+     - 释放子进程的内核栈
+     - 释放子进程的进程控制块
+     - 返回子进程 PID
+  4. 如果子进程存在但未退出：
+     - current->state = PROC_SLEEPING
+     - current->wait_state = WT_CHILD
+     - schedule() - 让出 CPU，等待子进程退出
+     - 被唤醒后，goto repeat 重新查找
+  5. 如果没有子进程：
+     - 返回 -E_BAD_PROC
+  ↓
+返回值写入 trapframe->gpr.a0
+  ↓
+__trapret → sret → 返回用户态
+
+```
+
 **exit** 处理进程退出。`do_exit` 会释放进程的内存空间（页表、页目录等），将进程状态设为 ZOMBIE，唤醒等待的父进程，并将孤儿进程交给 initproc 收养，最后调用调度器切换到其他进程。进程的进程控制块要等到父进程调用 wait 才会被真正释放。
 
+```text
+用户程序: sys_exit(error_code)
+  ↓
+ecall 指令
+  ↓
+__alltraps → trap() → syscall()
+  ↓
+sys_exit() (syscall.c:10)
+  - 从 trapframe 获取退出码
+  - 调用 do_exit(error_code)
+  ↓
+do_exit() (proc.c:523)
+  1. 检查是否是 idleproc 或 initproc（不允许退出）
+  2. 释放内存空间：
+     - lsatp(boot_pgdir_pa) - 切换到内核页表
+     - exit_mmap() - 释放内存映射
+     - put_pgdir() - 释放页目录
+     - mm_destroy() - 销毁内存管理结构
+  3. 设置进程状态：
+     - current->state = PROC_ZOMBIE
+     - current->exit_code = error_code
+  4. 处理父子关系：
+     - 如果父进程在等待（wait_state == WT_CHILD）：
+       - wakeup_proc(parent) - 唤醒父进程
+     - 将所有子进程交给 initproc 收养
+  5. schedule() - 切换到其他进程
+  6. panic() - 不应该执行到这里
+  ↓
+进程永远不会返回到用户态
+
+```
+
 #### 3.2 执行流程分析
+
+```text
+用户程序调用系统调用函数
+  ↓
+ecall 指令（触发异常）
+  ↓
+__alltraps（保存上下文到 trapframe）
+  ↓
+trap() 函数（异常分发）
+  ↓
+syscall() 函数（系统调用处理）
+  ↓
+执行对应的 do_xxx 函数
+  ↓
+__trapret（恢复上下文）
+  ↓
+sret 指令（返回用户态）
+  ↓
+用户程序继续执行
+```
 
 这四个系统调用的执行流程体现了用户态和内核态的紧密配合。
 
@@ -97,33 +248,47 @@ COW 的优势在于：如果子进程创建后立即执行 `exec`（这是常见
 ### 3.3 进程状态生命周期图
 
 ```
-PROC_UNINIT (未初始化)
-    |
-    | [alloc_proc() 分配进程控制块]
-    v
-PROC_RUNNABLE (可运行)
-    |
-    | [proc_run() / schedule() 选择进程]
-    v
-RUNNING (正在运行) ←──────────────────┐
-    |                                   |
-    | [时间片用完 / need_resched=1]     |
-    |                                   |
-    | [主动 yield / sleep]              |
-    v                                   |
-PROC_SLEEPING (睡眠)                    |
-    |                                   |
-    | [wakeup_proc() 被唤醒]            |
-    |                                   |
-    └───────────────────────────────────┘
-    |
-    | [do_exit() 进程退出]
-    v
-PROC_ZOMBIE (僵尸状态)
-    |
-    | [do_wait() 父进程回收]
-    v
-[进程控制块被释放]
++---------------------+
+| 1. PROC_UNINIT      |
+|    (未初始化)        |
++---------------------+
+           |
+           | [T1: alloc_proc() 分配控制块]
+           v
++---------------------+
+| 2. PROC_RUNNABLE    | <────┐
+|    (可运行 / 队列中)  |      |
++---------------------+      | [T3: 时间片用完 / yield / need_resched=1]
+           |                 |
+           | [T2: proc_run() / schedule() 选择]
+           v                 |
++---------------------+      |
+| 3. RUNNING          |  ────┘
+|    (正在运行)        |
++---------------------+
+  |          |
+  |          | [T4: do_wait() / do_sleep() 等待事件]
+  |          |
+  |          v
+  |  +---------------------+
+  |  | 4. PROC_SLEEPING    |
+  |  |    (睡眠 / 等待中)    |
+  |  +---------------------+
+  |           |
+  |           | [T5: wakeup_proc() 事件发生被唤醒]
+  |           v
+  |  [回到 2. PROC_RUNNABLE]
+  |
+  | [T6: do_exit() 进程退出]
+  v
++---------------------+
+| 5. PROC_ZOMBIE      |
+|    (僵尸状态)        |
++---------------------+
+           |
+           | [T7: do_wait() 父进程回收]
+           v
+[进程控制块和内核栈被释放]
 ```
 
 **状态转换说明**：
