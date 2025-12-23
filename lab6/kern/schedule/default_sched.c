@@ -17,7 +17,10 @@
 static void
 RR_init(struct run_queue *rq)
 {
-    // LAB6: YOUR CODE
+    // LAB6: 2311623
+    list_init(&(rq->run_list));
+    rq->proc_num=0;
+
 }
 
 /*
@@ -35,6 +38,15 @@ static void
 RR_enqueue(struct run_queue *rq, struct proc_struct *proc)
 {
     // LAB6: YOUR CODE
+    //双向链表
+    //todo before?
+    list_add_before(&(rq->run_list),&(proc->run_link));
+    //其他参数的调整
+    if(proc->time_slice==0 || proc->time_slice>rq->max_time_slice){
+        proc->time_slice=rq->max_time_slice;
+    }
+    proc->rq=rq;
+    rq->proc_num++;
 }
 
 /*
@@ -48,6 +60,8 @@ static void
 RR_dequeue(struct run_queue *rq, struct proc_struct *proc)
 {
     // LAB6: YOUR CODE
+    list_del_init(&(proc->run_link));
+    rq->proc_num--;
 }
 
 /*
@@ -62,6 +76,12 @@ static struct proc_struct *
 RR_pick_next(struct run_queue *rq)
 {
     // LAB6: YOUR CODE
+    //最尾的一个 两种情况，为空 idlethread取代
+    list_entry_t *le=list_next(&rq->run_list);
+    if (le !=&(rq->run_list)){
+            return le2proc(le,run_link);
+        }
+    return NULL;
 }
 
 /*
@@ -75,6 +95,15 @@ static void
 RR_proc_tick(struct run_queue *rq, struct proc_struct *proc)
 {
     // LAB6: YOUR CODE
+    //时钟中断的时候调用，一次时钟中断，时间流失了一小段；
+    if(proc->time_slice>0){
+        proc->time_slice--;
+    }
+    //时间片用完，放弃cpu,标记，代表该进程应该被换出去
+    if(proc->time_slice==0){
+        proc->need_resched=1;
+    }
+
 }
 
 struct sched_class default_sched_class = {

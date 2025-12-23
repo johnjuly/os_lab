@@ -22,10 +22,7 @@ volatile int num=0; //lab3
 static void print_ticks()
 {
     cprintf("%d ticks\n", TICK_NUM);
-#ifdef DEBUG_GRADE
-    cprintf("End of Test.\n");
-    panic("EOT: kernel seems ok.");
-#endif
+
 }
 
 /* idt_init - initialize IDT to each of the entry points in kern/trap/vectors.S */
@@ -131,16 +128,22 @@ void interrupt_handler(struct trapframe *tf)
 
         // lab6: YOUR CODE  (update LAB3 steps)
         //  在时钟中断时调用调度器的 sched_class_proc_tick 函数
-         clock_set_next_event();//发生这次时钟中断，设置下一次时钟中断
-         //todo 调用proc_tick函数
+
+        // 设置下一次时钟中断
+        clock_set_next_event();
+
+        // 全局时钟加一
+        ticks++;
+
+        // 每 TICK_NUM 次打印一次 tick 信息（可选，不会再触发 panic）
+        if (ticks % TICK_NUM == 0) {
+            print_ticks();
+        }
+
+        // 通知调度器当前进程走了一个 tick
+        if (current != NULL) {
             sched_class_proc_tick(current);
-            if(++ticks % TICK_NUM == 0){
-                print_ticks();
-                num++;
-            }
-            if(num==10){
-                sbi_shutdown();
-            }
+        }
         break;
     case IRQ_H_TIMER:
         cprintf("Hypervisor software interrupt\n");

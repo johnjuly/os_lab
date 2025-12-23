@@ -151,7 +151,7 @@ alloc_proc(void)
         proc->time_slice=0;
         proc->lab6_stride=0;
         proc->lab6_priority=0;
-        proc->lab6_run_pool.node_key=0; //todo
+        //proc->lab6_run_pool.node_key=0; //todo
 
     }
     return proc;
@@ -761,7 +761,15 @@ load_icode(unsigned char *binary, size_t size)
      *          tf_eip should be the entry point of this binary program (elf->e_entry)
      *          tf_eflags should be set to enable computer to produce Interrupt
      */
-
+     // 设置用户栈指针为用户栈顶
+     tf->gpr.sp = USTACKTOP;
+     // 设置程序入口点为ELF文件的入口地址
+     tf->epc = elf->e_entry;
+     // 设置状态寄存器：用户模式
+     // SPP = 0 (之前是用户模式)
+     // SPIE = 1 (允许在用户模式下中断)
+     // SIE = 0 (当前禁用中断，因为我们在内核中)
+     tf->status = (sstatus & ~SSTATUS_SPP) | SSTATUS_SPIE;
     ret = 0;
 out:
     return ret;
