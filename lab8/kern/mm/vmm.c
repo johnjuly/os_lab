@@ -266,8 +266,11 @@ bool copy_to_user(struct mm_struct *mm, void *dst, const void *src, size_t len)
     {
         return 0;
     }
-    // 在 RISC-V 中，内核页表通常已经映射了用户地址空间
-    // 所以可以直接使用 memcpy，但需要确保地址有效性已通过 user_mem_check 验证
+    
+    // 在 RISC-V 中，如果当前使用的是用户进程的页表，
+    // 那么用户虚拟地址应该已经映射，可以直接使用 memcpy
+    // 注意：调用 copy_to_user 之前，sys_wait 已经确保当前使用的是正确的页表
+    // 所以这里可以直接使用 memcpy
     memcpy(dst, src, len);
     return 1;
 }
