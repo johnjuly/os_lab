@@ -208,7 +208,7 @@ switch_kernel_memorylayout()
      *  set up kernel stack guardian pages
      */
     extern char bootstackguard[], boot_page_table_sv39[];
-    if ((bootstackguard + PGSIZE == bootstack) && (bootstacktop == boot_page_table_sv39))
+    if ((bootstackguard + PGSIZE == bootstack) && (&bootstacktop[0] == &boot_page_table_sv39[0]))
     {
         // check writeable and set 0
         memset(boot_page_table_sv39, 0, PGSIZE);
@@ -216,8 +216,8 @@ switch_kernel_memorylayout()
         bootstack[-PGSIZE] = 0;
 
         // set pages beneath and above the kernel stack as guardians
-        boot_map_segment(boot_pgdir_va, bootstackguard, PGSIZE, PADDR(bootstackguard), 0);
-        boot_map_segment(boot_pgdir_va, boot_page_table_sv39, PGSIZE, PADDR(boot_page_table_sv39), 0);
+        boot_map_segment(boot_pgdir_va, (uintptr_t)bootstackguard, PGSIZE, PADDR(bootstackguard), 0);
+        boot_map_segment(boot_pgdir_va, (uintptr_t)boot_page_table_sv39, PGSIZE, PADDR(boot_page_table_sv39), 0);
         flush_tlb();
 
         // the following four statements should all crash
@@ -480,6 +480,14 @@ int copy_range(pde_t *to, pde_t *from, uintptr_t start, uintptr_t end,
              * (3) memory copy from src_kvaddr to dst_kvaddr, size is PGSIZE
              * (4) build the map of phy addr of  nage with the linear addr start
              */
+            // (1) 获取源页面的内核虚拟地址
+            void *src_kvaddr = page2kva(page);
+            // (2) 获取目标页面的内核虚拟地址
+            void *dst_kvaddr = page2kva(npage);
+            // (3) 从源页面复制内容到目标页面，大小为 PGSIZE
+            memcpy(dst_kvaddr, src_kvaddr, PGSIZE);
+            // (4) 建立目标页面的物理地址与线性地址 start 的映射
+            ret = page_insert(to, npage, start, perm);
             
             assert(ret == 0);
         }

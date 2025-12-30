@@ -17,8 +17,10 @@
 #include <sbi.h>
 #include <proc.h>
 
-#define TICK_NUM 2
+// Forward declaration for dev_stdin_write
+void dev_stdin_write(char c);
 
+#define TICK_NUM 2
 static void print_ticks()
 {
     cprintf("%d ticks\n", TICK_NUM);

@@ -5,6 +5,13 @@
 #include <pmm.h>
 #include <assert.h>
 size_t max_swap_offset;
+
+// Extract swap offset from swap entry
+static inline size_t swap_offset(swap_entry_t entry)
+{
+    return entry & 0x7FFFFFFF; // Extract offset (assuming lower 31 bits)
+}
+
 void swapfs_init(void)
 {
     static_assert((PGSIZE % SECTSIZE) == 0);

@@ -256,10 +256,18 @@ bool copy_from_user(struct mm_struct *mm, void *dst, const void *src, size_t len
 
 bool copy_to_user(struct mm_struct *mm, void *dst, const void *src, size_t len)
 {
+    // 首先检查地址是否在用户地址空间内
+    if (mm != NULL && !USER_ACCESS((uintptr_t)dst, (uintptr_t)dst + len))
+    {
+        return 0;
+    }
+    // 然后进行完整的 user_mem_check
     if (!user_mem_check(mm, (uintptr_t)dst, len, 1))
     {
         return 0;
     }
+    // 在 RISC-V 中，内核页表通常已经映射了用户地址空间
+    // 所以可以直接使用 memcpy，但需要确保地址有效性已通过 user_mem_check 验证
     memcpy(dst, src, len);
     return 1;
 }
