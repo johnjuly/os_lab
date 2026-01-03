@@ -19,7 +19,7 @@ ucore.img
 # 评分和测试文件
 .score
 *.test
-
+disk0
 # 系统文件
 .DS_Store
 .DS_Store?

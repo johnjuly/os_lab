@@ -1162,8 +1162,7 @@ int do_wait(int pid, int *code_store)
     bool intr_flag, haskid;
 repeat:
     haskid = 0;
-    // 修复：pid == -1 表示等待任意子进程，应该当作 pid == 0 处理
-    if (pid != 0 && pid != -1)
+    if (pid > 0)
     {
         proc = find_proc(pid);
         if (proc != NULL && proc->parent == current)
@@ -1175,7 +1174,7 @@ repeat:
             }
         }
     }
-    else
+    else if (pid == 0)
     {
         proc = current->cptr;
         for (; proc != NULL; proc = proc->optr)
@@ -1186,6 +1185,10 @@ repeat:
                 goto found;
             }
         }
+    }
+    else
+    {
+        return -E_BAD_PROC;
     }
     if (haskid)
     {

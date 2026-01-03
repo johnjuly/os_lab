@@ -29,47 +29,35 @@ sys_wait(uint64_t arg[])
 {
     int pid = (int)arg[0];
     int *store = (int *)arg[1];
-    int exit_code;
-    int *code_store_ptr = store ? &exit_code : NULL;
-    
-    // 关键：在调用 do_wait 之前，保存当前进程的 mm 和 pgdir
-    // 因为 do_wait 可能会调用 schedule()，导致 current 切换
-    struct mm_struct *mm = current->mm;
-    uintptr_t pgdir = current->pgdir;
-    
-    // 调用 do_wait，将 exit_code 保存到局部变量
-    int ret = do_wait(pid, code_store_ptr);
-    
-    // 关键修复：只有在 syscall 返回路径中，确保当前是用户进程且使用正确的页表时，才写用户内存
-    // 注意：do_wait 可能调用了 schedule()，所以需要检查 current 是否还是原来的进程
-    // 如果 current->mm != mm，说明进程已经切换，不应该写用户内存
-    if (ret == 0 && store != NULL && current->mm == mm && mm != NULL)
+
+    // badarg.c expects invalid store pointers to fail *without* reaping the child.
+    // So we must validate the user pointer before calling do_wait().
+    if (store != NULL)
     {
-        // 确保当前使用的是正确的页表
-        // 如果页表不匹配，切换到正确的页表
-        if (current->pgdir != pgdir)
+        struct mm_struct *mm = current->mm;
+        if (mm == NULL)
         {
-            lsatp(pgdir);
-            flush_tlb();
+            return -E_INVAL;
         }
-        
-        // 检查地址是否在用户地址空间内
         if (!USER_ACCESS((uintptr_t)store, (uintptr_t)store + sizeof(int)))
         {
             return -E_INVAL;
         }
-        // 进一步检查地址是否在有效的 VMA 中
         if (!user_mem_check(mm, (uintptr_t)store, sizeof(int), 1))
         {
             return -E_INVAL;
         }
-        // 使用 copy_to_user 安全地写入用户内存
-        if (!copy_to_user(mm, store, &exit_code, sizeof(int)))
+    }
+
+    int exit_code;
+    int ret = do_wait(pid, (store != NULL) ? &exit_code : NULL);
+    if (ret == 0 && store != NULL)
+    {
+        if (!copy_to_user(current->mm, store, &exit_code, sizeof(int)))
         {
             return -E_INVAL;
         }
     }
-    
     return ret;
 }
 static int
