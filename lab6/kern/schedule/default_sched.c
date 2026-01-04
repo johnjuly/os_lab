@@ -37,7 +37,7 @@ RR_init(struct run_queue *rq)
 static void
 RR_enqueue(struct run_queue *rq, struct proc_struct *proc)
 {
-    // LAB6: YOUR CODE
+    // LAB6: 2314018
     //双向链表
     //todo before?
     list_add_before(&(rq->run_list),&(proc->run_link));
@@ -59,7 +59,7 @@ RR_enqueue(struct run_queue *rq, struct proc_struct *proc)
 static void
 RR_dequeue(struct run_queue *rq, struct proc_struct *proc)
 {
-    // LAB6: YOUR CODE
+    // LAB6: 2313982
     list_del_init(&(proc->run_link));
     rq->proc_num--;
 }
@@ -75,7 +75,7 @@ RR_dequeue(struct run_queue *rq, struct proc_struct *proc)
 static struct proc_struct *
 RR_pick_next(struct run_queue *rq)
 {
-    // LAB6: YOUR CODE
+    // LAB6: 2311623
     //最尾的一个 两种情况，为空 idlethread取代
     list_entry_t *le=list_next(&rq->run_list);
     if (le !=&(rq->run_list)){
@@ -94,7 +94,7 @@ RR_pick_next(struct run_queue *rq)
 static void
 RR_proc_tick(struct run_queue *rq, struct proc_struct *proc)
 {
-    // LAB6: YOUR CODE
+    // LAB6: 2314018
     //时钟中断的时候调用，一次时钟中断，时间流失了一小段；
     if(proc->time_slice>0){
         proc->time_slice--;

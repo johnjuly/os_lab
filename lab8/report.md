@@ -119,7 +119,7 @@ if (size != 0) {
 
 ### 练习 2 实现思路
 
-`load_icode` 函数负责从文件系统中加载 ELF 格式的可执行文件到进程的内存空间，并设置好进程的执行环境。与 lab5 不同的是，lab8 中需要从文件描述符读取文件内容，而不是从内存中的二进制数据加载。此外，还需要在用户栈上设置 `argc` 和 `argv` 参数。
+`do_execve` 通过 `sysfile_open(argv[0], O_RDONLY)` 打开位于 SFS 文件系统中的用户程序，得到文件描述符 `fd` 后调用 `load_icode(fd, argc, kargv)` 完成装载。`load_icode` 的核心工作是：从文件描述符读取 ELF（`load_icode_read` 内部用 `sysfile_seek/sysfile_read`），建立新 `mm`/页表，按程序头映射并拷贝 TEXT/DATA、清零 BSS，建立用户栈并放置参数，最后设置 trapframe（入口点、用户态状态位，以及 RISC-V 下 `a0/a1` 传参）。
 
 ### 实现步骤
 
@@ -193,9 +193,12 @@ vm_flags = VM_READ | VM_WRITE | VM_STACK;
 if ((ret = mm_map(mm, USTACKTOP - USTACKSIZE, USTACKSIZE, vm_flags, NULL)) != 0) {
     goto bad_cleanup_mmap;
 }
-// 分配栈页面
-assert(pgdir_alloc_page(mm->pgdir, USTACKTOP - PGSIZE, PTE_USER) != NULL);
-// ... 分配更多栈页面
+// 预分配若干页栈空间（实现中分配了 16 页）
+for (int i = 1; i <= 16; i++) {
+    if (pgdir_alloc_page(mm->pgdir, USTACKTOP - i * PGSIZE, PTE_USER) == NULL) {
+        goto bad_cleanup_mmap;
+    }
+}
 ```
 
 建立用户栈的虚拟内存映射，并分配初始栈页面。
@@ -208,6 +211,7 @@ mm_count_inc(mm);
 current->mm = mm;
 current->pgdir = PADDR(mm->pgdir);
 lsatp(PADDR(mm->pgdir));
+flush_tlb();
 ```
 
 将新创建的内存管理结构关联到当前进程，并更新页表基址寄存器。
@@ -216,40 +220,48 @@ lsatp(PADDR(mm->pgdir));
 
 这是 lab8 相比 lab5 新增的重要功能。需要将命令行参数放置到用户栈上，格式如下（从高地址到低地址）：
 
-- 参数字符串（argv[0], argv[1], ...）
-- argv 指针数组（包含 argc+1 个元素，最后一个为 NULL）
-- argc（整数）
+- 参数字符串区（逐个以 `\0` 结尾紧密排布）
+- `argv[]` 指针数组（`argc + 1` 个元素，最后一个为 `NULL`），并按指针大小对齐
+- `argc`（`int`），同时将用户栈指针 `sp` 指向这里（并按 16 字节对齐，满足 RISC-V ABI）
 
 实现步骤：
 
-1. 计算所需的总空间大小
-2. 从栈顶向下分配所有需要的页面
-3. 复制参数字符串到栈上
-4. 设置 argv 指针数组，指向对应的字符串
-5. 设置 argc 值
-6. 更新栈指针
+1. 统计参数字符串总长度 `string_size`
+2. 计算 `argv[]` 数组大小并确定三段区域的起始地址：`argv_strings_addr / argv_array_va / argc_addr(stack_pointer)`
+3. 确保从 `stack_pointer` 到 `USTACKTOP` 之间的页已分配（实现中还会向下额外保证若干页，避免后续 `call` 等压栈触发缺页）
+4. 逐个拷贝参数字符串到用户栈（实现中按页处理，支持跨页拷贝）
+5. 写入 `argv[i]` 指针值与 `argv[argc]=NULL`
+6. 写入 `argc`，并记录最终 `stack_pointer`
 
 关键代码：
 
 ```c
-// 计算总大小
+// 计算字符串区大小
 size_t string_size = 0;
 for (i = 0; i < argc; i++) {
     string_size += strlen(kargv[i]) + 1;
 }
 size_t argv_array_size = sizeof(uintptr_t) * (argc + 1);
 size_t argc_size = sizeof(int);
-size_t total_size = string_size + argv_array_size + argc_size;
 
-// 分配页面
-uintptr_t argv_bottom = stacktop - total_size;
-uintptr_t va = argv_bottom;
-while (va < stacktop) {
-    uintptr_t la = ROUNDDOWN(va, PGSIZE);
-    if (pgdir_alloc_page(mm->pgdir, la, PTE_USER) == NULL) {
-        goto bad_cleanup_mmap;
+// 从高地址向低地址布局三段区域
+uintptr_t argv_strings_addr = USTACKTOP - string_size;
+uintptr_t argv_array_va = argv_strings_addr - argv_array_size;
+argv_array_va = ROUNDDOWN(argv_array_va, sizeof(uintptr_t));
+uintptr_t stack_pointer = argv_array_va - argc_size;
+stack_pointer = ROUNDDOWN(stack_pointer, 16);
+
+// 确保相关页已分配（并向下预留若干页）
+uintptr_t va = ROUNDDOWN(stack_pointer - 4 * PGSIZE, PGSIZE);
+if (va < USTACKTOP - USTACKSIZE) {
+    va = USTACKTOP - USTACKSIZE;
+}
+for (; va <= USTACKTOP - PGSIZE; va += PGSIZE) {
+    if (get_page(mm->pgdir, va, NULL) == NULL) {
+        if (pgdir_alloc_page(mm->pgdir, va, PTE_USER) == NULL) {
+            goto bad_cleanup_mmap;
+        }
     }
-    va = la + PGSIZE;
 }
 
 // 复制字符串并设置 argv 数组
@@ -264,8 +276,12 @@ struct trapframe *tf = current->tf;
 uintptr_t sstatus = tf->status;
 memset(tf, 0, sizeof(struct trapframe));
 
-// 设置用户栈指针
-tf->gpr.sp = stacktop;
+// 设置用户栈指针（指向 argc，且 16 字节对齐）
+tf->gpr.sp = stack_pointer;
+
+// RISC-V 约定：函数参数通过寄存器传递
+tf->gpr.a0 = argc;
+tf->gpr.a1 = (uintptr_t)argv_array_va;
 // 设置程序入口点
 tf->epc = elf.e_entry;
 // 设置状态寄存器：用户模式
@@ -274,34 +290,31 @@ tf->status = (sstatus & ~SSTATUS_SPP) | SSTATUS_SPIE;
 
 设置 trapframe，包括：
 
-- `gpr.sp`：用户栈指针，指向 argc 的位置
+- `gpr.sp`：用户栈指针，指向 `argc` 的位置（并保证 16 字节对齐）
+- `gpr.a0/a1`：传入 `umain(argc, argv)` 所需的两个参数（对应 `argc` 与 `argv[]` 的用户地址）
 - `epc`：程序入口地址（ELF 文件头中的 `e_entry`）
 - `status`：状态寄存器，清除 SPP 位（表示之前是用户模式），设置 SPIE 位（允许用户模式中断）
 
 ### 练习 2 关键函数说明
 
-- **`load_icode_read`**：从文件描述符读取指定偏移和长度的数据
+- **`sysfile_open/sysfile_seek/sysfile_read`**：在内核态通过 VFS 操作可执行文件
+- **`load_icode_read`**：`load_icode` 的文件读取封装（先 `seek` 再 `read`）
 - **`mm_map`**：建立虚拟内存映射
-- **`pgdir_alloc_page`**：分配物理页面并建立页表项
+- **`pgdir_alloc_page`**：分配物理页面并建立页表项（本实验中会根据 ELF 段权限设置 `PTE_R/W/X`）
 - **`get_page`**：根据虚拟地址获取对应的 Page 结构
+- **`flush_tlb/lsatp`**：切换页表后刷新 TLB，保证新页表生效
 
 ### 练习 2 与 lab5 的主要区别
 
 1. **数据来源**：lab5 从内存中的二进制数据加载，lab8 从文件描述符读取
-2. **参数传递**：lab8 需要在用户栈上设置 `argc` 和 `argv`
-3. **文件操作**：使用 `load_icode_read` 替代直接的内存访问
+2. **执行入口**：lab8 通过 `do_execve -> sysfile_open` 从文件系统找到程序并打开得到 `fd`
+3. **参数传递**：RISC-V 下 `umain` 通过寄存器拿参数（`a0=argc, a1=argv`），同时实现中也把 `argc/argv/strings` 放在用户栈上
+4. **页表切换**：`do_execve` 先切回 `boot_pgdir_pa` 并回收旧 `mm`，`load_icode` 完成新 `mm` 后再 `lsatp` 切换并 `flush_tlb`
 
 ### 练习 2 设计要点
 
 1. **错误处理**：每个步骤都检查返回值，失败时通过 `goto` 跳转到相应的清理代码
 2. **内存对齐**：argv 数组需要按指针大小对齐
-3. **页面分配**：先分配所有需要的页面，再复制数据，避免跨页访问问题
-4. **栈布局**：按照标准 C 程序参数传递约定布局栈空间
-
-## 扩展练习 Challenge1：完成基于“UNIX 的 PIPE 机制”的设计方案
-
-如果要在 ucore 里加入 UNIX 的管道（Pipe）机制，至少需要定义哪些数据结构和接口？（接口给出语义即可，不必具体实现。数据结构的设计应当给出一个（或多个）具体的 C 语言 struct 定义。在网络上查找相关的 Linux 资料和实现，请在实验报告中给出设计实现”UNIX 的 PIPE 机制“的概要设方案，你的设计应当体现出对可能出现的同步互斥问题的处理。）
-
-## 扩展练习 Challenge2：完成基于“UNIX 的软连接和硬连接机制”的设计方案
-
-如果要在 ucore 里加入 UNIX 的软连接和硬连接机制，至少需要定义哪些数据结构和接口？（接口给出语义即可，不必具体实现。数据结构的设计应当给出一个（或多个）具体的 C 语言 struct 定义。在网络上查找相关的 Linux 资料和实现，请在实验报告中给出设计实现”UNIX 的软连接和硬连接机制“的概要设方案，你的设计应当体现出对可能出现的同步互斥问题的处理。）
+3. **权限映射**：根据 ELF 段标志设置 `VM_READ/VM_WRITE/VM_EXEC`，并同步设置 RISC-V 的 `PTE_R/W/X`（写段需要同时具备 `PTE_R`）
+4. **跨页拷贝**：参数字符串与程序段装载都按页处理，避免跨页直接访问导致错误
+5. **栈布局**：`sp` 需 16 字节对齐，并预留向下生长空间，避免用户态函数调用压栈触发缺页

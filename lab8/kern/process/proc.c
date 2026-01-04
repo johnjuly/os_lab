@@ -127,7 +127,7 @@ alloc_proc(void)
          *       uint32_t lab6_priority;                     // priority value (lab6 stride)
          */
 
-        //LAB8 YOUR CODE : (update LAB6 steps)
+        //LAB8 2311623 : (update LAB6 steps)
         /*
          * below fields(add in LAB6) in proc_struct need to be initialized
          *       struct files_struct * filesp;                file struct point        
@@ -268,7 +268,7 @@ void proc_run(struct proc_struct *proc)
         *   lcr3():                   Modify the value of CR3 register
         *   switch_to():              Context switching between two processes
         */
-    //LAB8 YOUR CODE : (update LAB4 steps)
+    //LAB8  2314018  : (update LAB4 steps)
       /*
        * below fields(add in LAB6) in proc_struct need to be initialized
        *       before switch_to();you should flush the tlb
@@ -525,7 +525,7 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
         goto fork_out;
     }
     ret = -E_NO_MEM;
-    // LAB8:EXERCISE2 YOUR CODE  HINT:how to copy the fs in parent's proc_struct?
+    // LAB8:EXERCISE2 2311623  HINT:how to copy the fs in parent's proc_struct?
     // LAB4:填写你在lab4中实现的代码
     /*
      * Some Useful MACROs, Functions and DEFINEs, you can use them in below implementation.
@@ -694,7 +694,7 @@ load_icode_read(int fd, void *buf, size_t len, off_t offset)
 static int
 load_icode(int fd, int argc, char **kargv)
 {
-    /* LAB8:EXERCISE2 YOUR CODE  HINT:how to load the file with handler fd  in to process's memory? how to setup argc/argv?
+    /* LAB8:EXERCISE2 2314018  HINT:how to load the file with handler fd  in to process's memory? how to setup argc/argv?
      * MACROs or Functions:
      *  mm_create        - create a mm
      *  setup_pgdir      - setup pgdir in mm
